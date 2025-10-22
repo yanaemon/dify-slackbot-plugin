@@ -56,44 +56,42 @@ class SlackEndpoint(Endpoint):
                             inputs={},
                             response_mode="blocking",
                         )
+
+                        answer = response.get("answer", "")
+                        formatted_answer = converter.convert(answer)
+
+                        # Create proper mrkdwn block structure
+                        blocks = [{
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": formatted_answer
+                            }
+                        }]
+
+                        result = client.chat_postMessage(
+                            channel=channel,
+                            thread_ts=message_ts,  # Reply in thread
+                            text=formatted_answer,  # Fallback text
+                            blocks=blocks,
+                            mrkdwn=True
+                        )
+
+                        # Remove eyes emoji after successful response
                         try:
-                            answer = response.get("answer", "")
-                            formatted_answer = converter.convert(answer)
-                            
-                            # Create proper mrkdwn block structure
-                            blocks = [{
-                                "type": "section",
-                                "text": {
-                                    "type": "mrkdwn",
-                                    "text": formatted_answer
-                                }
-                            }]
-                            
-                            result = client.chat_postMessage(
+                            client.reactions_remove(
                                 channel=channel,
-                                thread_ts=message_ts,  # Reply in thread
-                                text=formatted_answer,  # Fallback text
-                                blocks=blocks,
-                                mrkdwn=True
+                                timestamp=message_ts,
+                                name="eyes"
                             )
+                        except SlackApiError:
+                            pass  # Continue even if reaction removal fails
 
-                            # Remove eyes emoji after successful response
-                            try:
-                                client.reactions_remove(
-                                    channel=channel,
-                                    timestamp=message_ts,
-                                    name="eyes"
-                                )
-                            except SlackApiError:
-                                pass  # Continue even if reaction removal fails
-
-                            return Response(
-                                status=200,
-                                response=json.dumps(result),
-                                content_type="application/json"
-                            )
-                        except SlackApiError as e:
-                            raise e
+                        return Response(
+                            status=200,
+                            response=json.dumps(result),
+                            content_type="application/json"
+                        )
                     except Exception as e:
                         err = traceback.format_exc()
 
