@@ -41,29 +41,30 @@ class SlackEndpoint(Endpoint):
                     client = WebClient(token=token)
 
                     try:
-                        # Post initial placeholder message
-                        initial_msg = client.chat_postMessage(
-                            channel=channel,
-                            thread_ts=message_ts,
-                            text="Thinking...",
-                            mrkdwn=True
-                        )
-                        response_ts = initial_msg["ts"]
-
-                        # Start streaming response
-                        response_stream = self.session.app.chat.invoke(
-                            app_id=settings["app"]["app_id"],
-                            query=message,
-                            inputs={},
-                            response_mode="streaming",
-                        )
-
-                        # Accumulate streaming chunks
-                        full_answer = ""
-                        last_update_time = time.time()
-                        update_interval = 1.0  # Update every 1 second
-
+                        # Try streaming mode first (for Agent/Chat apps)
                         try:
+                            # Post initial placeholder message
+                            initial_msg = client.chat_postMessage(
+                                channel=channel,
+                                thread_ts=message_ts,
+                                text="Thinking...",
+                                mrkdwn=True
+                            )
+                            response_ts = initial_msg["ts"]
+
+                            # Start streaming response
+                            response_stream = self.session.app.chat.invoke(
+                                app_id=settings["app"]["app_id"],
+                                query=message,
+                                inputs={},
+                                response_mode="streaming",
+                            )
+
+                            # Accumulate streaming chunks
+                            full_answer = ""
+                            last_update_time = time.time()
+                            update_interval = 1.0  # Update every 1 second
+
                             for chunk in response_stream:
                                 # Handle different chunk structures
                                 chunk_data = None
@@ -105,36 +106,68 @@ class SlackEndpoint(Endpoint):
                                         last_update_time = current_time
                                     except SlackApiError:
                                         pass  # Continue if update fails
-                        except Exception as stream_error:
-                            # Streaming error occurred, continue to show what we have
-                            pass
 
-                        # Final update with complete answer
-                        if full_answer:
-                            formatted_answer = converter.convert(full_answer)
-                            blocks = [{
-                                "type": "section",
-                                "text": {
-                                    "type": "mrkdwn",
-                                    "text": formatted_answer
-                                }
-                            }]
+                            # Final update with complete answer
+                            if full_answer:
+                                formatted_answer = converter.convert(full_answer)
+                                blocks = [{
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": formatted_answer
+                                    }
+                                }]
 
-                            result = client.chat_update(
-                                channel=channel,
-                                ts=response_ts,
-                                text=formatted_answer,
-                                blocks=blocks,
-                                mrkdwn=True
-                            )
-                        else:
-                            # If no answer was collected, show error message
-                            result = client.chat_update(
-                                channel=channel,
-                                ts=response_ts,
-                                text="Sorry, I couldn't generate a response.",
-                                mrkdwn=True
-                            )
+                                result = client.chat_update(
+                                    channel=channel,
+                                    ts=response_ts,
+                                    text=formatted_answer,
+                                    blocks=blocks,
+                                    mrkdwn=True
+                                )
+                            else:
+                                # If no answer was collected, show error message
+                                result = client.chat_update(
+                                    channel=channel,
+                                    ts=response_ts,
+                                    text="Sorry, I couldn't generate a response.",
+                                    mrkdwn=True
+                                )
+
+                        except Exception as streaming_error:
+                            # Streaming failed (e.g., Chatflow doesn't support it), fall back to blocking mode
+                            error_msg = str(streaming_error)
+                            if "unexpected app type" in error_msg or "streaming" in error_msg.lower():
+                                # Use blocking mode for Chatflow apps
+                                response = self.session.app.chat.invoke(
+                                    app_id=settings["app"]["app_id"],
+                                    query=message,
+                                    inputs={},
+                                    response_mode="blocking",
+                                )
+
+                                answer = response.get("answer", "")
+                                formatted_answer = converter.convert(answer)
+
+                                # Create proper mrkdwn block structure
+                                blocks = [{
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": formatted_answer
+                                    }
+                                }]
+
+                                result = client.chat_postMessage(
+                                    channel=channel,
+                                    thread_ts=message_ts,
+                                    text=formatted_answer,
+                                    blocks=blocks,
+                                    mrkdwn=True
+                                )
+                            else:
+                                # Re-raise if it's a different error
+                                raise
 
                         return Response(
                             status=200,
