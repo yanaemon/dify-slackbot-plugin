@@ -42,6 +42,7 @@ class SlackEndpoint(Endpoint):
 
                     try:
                         # Try streaming mode first (for Agent/Chat apps)
+                        result = None
                         try:
                             # Post initial placeholder message
                             initial_msg = client.chat_postMessage(
@@ -135,76 +136,35 @@ class SlackEndpoint(Endpoint):
                                 )
 
                         except Exception as streaming_error:
-                            # Streaming failed, try different app types
+                            # Streaming failed, try Chatflow with completion API
                             error_msg = str(streaming_error)
                             if "unexpected app type" in error_msg:
-                                # Try as Workflow/Chatflow app with blocking mode
-                                try:
-                                    # For Chatflow, use workflow.invoke with inputs
-                                    response = self.session.app.workflow.invoke(
-                                        app_id=settings["app"]["app_id"],
-                                        inputs={},  # Empty inputs, will add query below
-                                    )
+                                # Use completion API for Chatflow apps
+                                response = self.session.app.completion.invoke(
+                                    app_id=settings["app"]["app_id"],
+                                    query=message,
+                                    inputs={},
+                                    response_mode="blocking",
+                                )
 
-                                    # Extract answer from workflow response
-                                    answer = ""
-                                    if isinstance(response, dict):
-                                        # Try different possible response structures
-                                        answer = response.get("answer", "") or response.get("text", "") or response.get("data", {}).get("outputs", {}).get("text", "")
+                                answer = response.get("answer", "")
+                                formatted_answer = converter.convert(answer)
 
-                                    if not answer:
-                                        answer = "Response received but could not extract answer."
+                                blocks = [{
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": formatted_answer
+                                    }
+                                }]
 
-                                    formatted_answer = converter.convert(answer)
-
-                                    # Create proper mrkdwn block structure
-                                    blocks = [{
-                                        "type": "section",
-                                        "text": {
-                                            "type": "mrkdwn",
-                                            "text": formatted_answer
-                                        }
-                                    }]
-
-                                    result = client.chat_postMessage(
-                                        channel=channel,
-                                        thread_ts=message_ts,
-                                        text=formatted_answer,
-                                        blocks=blocks,
-                                        mrkdwn=True
-                                    )
-                                except Exception as workflow_error:
-                                    # If workflow.invoke also fails, try the completion API as last resort
-                                    workflow_error_msg = str(workflow_error)
-                                    if "missing query" in workflow_error_msg:
-                                        # Use completion API for chatflow (non-chat apps)
-                                        response = self.session.app.completion.invoke(
-                                            app_id=settings["app"]["app_id"],
-                                            query=message,
-                                            inputs={},
-                                            response_mode="blocking",
-                                        )
-
-                                        answer = response.get("answer", "")
-                                        formatted_answer = converter.convert(answer)
-
-                                        blocks = [{
-                                            "type": "section",
-                                            "text": {
-                                                "type": "mrkdwn",
-                                                "text": formatted_answer
-                                            }
-                                        }]
-
-                                        result = client.chat_postMessage(
-                                            channel=channel,
-                                            thread_ts=message_ts,
-                                            text=formatted_answer,
-                                            blocks=blocks,
-                                            mrkdwn=True
-                                        )
-                                    else:
-                                        raise streaming_error
+                                result = client.chat_postMessage(
+                                    channel=channel,
+                                    thread_ts=message_ts,
+                                    text=formatted_answer,
+                                    blocks=blocks,
+                                    mrkdwn=True
+                                )
                             else:
                                 # Re-raise if it's a different error
                                 raise
