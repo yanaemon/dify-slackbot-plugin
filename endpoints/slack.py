@@ -135,36 +135,46 @@ class SlackEndpoint(Endpoint):
                                 )
 
                         except Exception as streaming_error:
-                            # Streaming failed (e.g., Chatflow doesn't support it), fall back to blocking mode
+                            # Streaming failed, try different app types
                             error_msg = str(streaming_error)
-                            if "unexpected app type" in error_msg or "streaming" in error_msg.lower():
-                                # Use blocking mode for Chatflow apps
-                                response = self.session.app.chat.invoke(
-                                    app_id=settings["app"]["app_id"],
-                                    query=message,
-                                    inputs={},
-                                    response_mode="blocking",
-                                )
+                            if "unexpected app type" in error_msg:
+                                # Try as Workflow/Chatflow app
+                                try:
+                                    response = self.session.app.workflow.invoke(
+                                        app_id=settings["app"]["app_id"],
+                                        inputs={"query": message},
+                                    )
 
-                                answer = response.get("answer", "")
-                                formatted_answer = converter.convert(answer)
+                                    # Extract answer from workflow response
+                                    answer = ""
+                                    if isinstance(response, dict):
+                                        # Try different possible response structures
+                                        answer = response.get("answer", "") or response.get("text", "") or response.get("data", {}).get("outputs", {}).get("text", "")
 
-                                # Create proper mrkdwn block structure
-                                blocks = [{
-                                    "type": "section",
-                                    "text": {
-                                        "type": "mrkdwn",
-                                        "text": formatted_answer
-                                    }
-                                }]
+                                    if not answer:
+                                        answer = "Response received but could not extract answer."
 
-                                result = client.chat_postMessage(
-                                    channel=channel,
-                                    thread_ts=message_ts,
-                                    text=formatted_answer,
-                                    blocks=blocks,
-                                    mrkdwn=True
-                                )
+                                    formatted_answer = converter.convert(answer)
+
+                                    # Create proper mrkdwn block structure
+                                    blocks = [{
+                                        "type": "section",
+                                        "text": {
+                                            "type": "mrkdwn",
+                                            "text": formatted_answer
+                                        }
+                                    }]
+
+                                    result = client.chat_postMessage(
+                                        channel=channel,
+                                        thread_ts=message_ts,
+                                        text=formatted_answer,
+                                        blocks=blocks,
+                                        mrkdwn=True
+                                    )
+                                except Exception as workflow_error:
+                                    # If workflow also fails, re-raise the original streaming error
+                                    raise streaming_error
                             else:
                                 # Re-raise if it's a different error
                                 raise
