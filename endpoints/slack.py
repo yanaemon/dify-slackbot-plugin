@@ -1,4 +1,5 @@
 import json
+import time
 import traceback
 from typing import Mapping
 from werkzeug import Request, Response
@@ -49,33 +50,80 @@ class SlackEndpoint(Endpoint):
                     except SlackApiError:
                         pass  # Continue even if reaction fails
 
-                    try: 
-                        response = self.session.app.chat.invoke(
+                    try:
+                        # Post initial placeholder message
+                        initial_msg = client.chat_postMessage(
+                            channel=channel,
+                            thread_ts=message_ts,
+                            text="Thinking...",
+                            mrkdwn=True
+                        )
+                        response_ts = initial_msg["ts"]
+
+                        # Start streaming response
+                        response_stream = self.session.app.chat.invoke(
                             app_id=settings["app"]["app_id"],
                             query=message,
                             inputs={},
-                            response_mode="blocking",
+                            response_mode="streaming",
                         )
 
-                        answer = response.get("answer", "")
-                        formatted_answer = converter.convert(answer)
+                        # Accumulate streaming chunks
+                        full_answer = ""
+                        last_update_time = time.time()
+                        update_interval = 1.0  # Update every 1 second
 
-                        # Create proper mrkdwn block structure
-                        blocks = [{
-                            "type": "section",
-                            "text": {
-                                "type": "mrkdwn",
-                                "text": formatted_answer
-                            }
-                        }]
+                        for chunk in response_stream:
+                            if chunk.event == "agent_message" or chunk.event == "message":
+                                if hasattr(chunk, 'answer'):
+                                    full_answer = chunk.answer
+                                elif hasattr(chunk, 'data') and isinstance(chunk.data, dict):
+                                    full_answer = chunk.data.get("answer", full_answer)
 
-                        result = client.chat_postMessage(
-                            channel=channel,
-                            thread_ts=message_ts,  # Reply in thread
-                            text=formatted_answer,  # Fallback text
-                            blocks=blocks,
-                            mrkdwn=True
-                        )
+                            # Update message periodically
+                            current_time = time.time()
+                            if current_time - last_update_time >= update_interval and full_answer:
+                                formatted_answer = converter.convert(full_answer)
+                                blocks = [{
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": formatted_answer
+                                    }
+                                }]
+
+                                try:
+                                    client.chat_update(
+                                        channel=channel,
+                                        ts=response_ts,
+                                        text=formatted_answer,
+                                        blocks=blocks,
+                                        mrkdwn=True
+                                    )
+                                    last_update_time = current_time
+                                except SlackApiError:
+                                    pass  # Continue if update fails
+
+                        # Final update with complete answer
+                        if full_answer:
+                            formatted_answer = converter.convert(full_answer)
+                            blocks = [{
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": formatted_answer
+                                }
+                            }]
+
+                            result = client.chat_update(
+                                channel=channel,
+                                ts=response_ts,
+                                text=formatted_answer,
+                                blocks=blocks,
+                                mrkdwn=True
+                            )
+                        else:
+                            result = {"ok": True}
 
                         # Remove eyes emoji after successful response
                         try:
