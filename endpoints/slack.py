@@ -176,16 +176,6 @@ class SlackEndpoint(Endpoint):
                     except Exception as e:
                         err = traceback.format_exc()
 
-                        # Add x emoji to indicate error
-                        try:
-                            client.reactions_add(
-                                channel=channel,
-                                timestamp=message_ts,
-                                name="x"
-                            )
-                        except SlackApiError:
-                            pass
-
                         return Response(
                             status=200,
                             response="Sorry, I'm having trouble processing your request. Please try again later." + str(err),
