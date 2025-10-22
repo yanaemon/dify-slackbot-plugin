@@ -40,16 +40,6 @@ class SlackEndpoint(Endpoint):
                     token = settings.get("bot_token")
                     client = WebClient(token=token)
 
-                    # Add eyes emoji to indicate processing has started
-                    try:
-                        client.reactions_add(
-                            channel=channel,
-                            timestamp=message_ts,
-                            name="eyes"
-                        )
-                    except SlackApiError:
-                        pass  # Continue even if reaction fails
-
                     try:
                         # Post initial placeholder message
                         initial_msg = client.chat_postMessage(
@@ -146,16 +136,6 @@ class SlackEndpoint(Endpoint):
                                 mrkdwn=True
                             )
 
-                        # Remove eyes emoji after successful response
-                        try:
-                            client.reactions_remove(
-                                channel=channel,
-                                timestamp=message_ts,
-                                name="eyes"
-                            )
-                        except SlackApiError:
-                            pass  # Continue even if reaction removal fails
-
                         return Response(
                             status=200,
                             response=json.dumps(result),
@@ -164,16 +144,7 @@ class SlackEndpoint(Endpoint):
                     except Exception as e:
                         err = traceback.format_exc()
 
-                        # Remove eyes emoji and add x emoji to indicate error
-                        try:
-                            client.reactions_remove(
-                                channel=channel,
-                                timestamp=message_ts,
-                                name="eyes"
-                            )
-                        except SlackApiError:
-                            pass
-
+                        # Add x emoji to indicate error
                         try:
                             client.reactions_add(
                                 channel=channel,
