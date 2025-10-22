@@ -136,9 +136,8 @@ class SlackEndpoint(Endpoint):
                                 )
 
                         except Exception as streaming_error:
-                            # Streaming failed, try Chatflow with completion API
-                            error_msg = str(streaming_error)
-                            if "unexpected app type" in error_msg:
+                            # Streaming failed, try Chatflow with completion API as fallback
+                            try:
                                 # Use completion API for Chatflow apps
                                 response = self.session.app.completion.invoke(
                                     app_id=settings["app"]["app_id"],
@@ -165,9 +164,9 @@ class SlackEndpoint(Endpoint):
                                     blocks=blocks,
                                     mrkdwn=True
                                 )
-                            else:
-                                # Re-raise if it's a different error
-                                raise
+                            except Exception as completion_error:
+                                # If completion also fails, re-raise original streaming error
+                                raise streaming_error
 
                         return Response(
                             status=200,
