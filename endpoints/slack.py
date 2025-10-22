@@ -138,11 +138,12 @@ class SlackEndpoint(Endpoint):
                             # Streaming failed, try different app types
                             error_msg = str(streaming_error)
                             if "unexpected app type" in error_msg:
-                                # Try as Workflow/Chatflow app
+                                # Try as Workflow/Chatflow app with blocking mode
                                 try:
+                                    # For Chatflow, use workflow.invoke with inputs
                                     response = self.session.app.workflow.invoke(
                                         app_id=settings["app"]["app_id"],
-                                        inputs={"query": message},
+                                        inputs={},  # Empty inputs, will add query below
                                     )
 
                                     # Extract answer from workflow response
@@ -173,8 +174,37 @@ class SlackEndpoint(Endpoint):
                                         mrkdwn=True
                                     )
                                 except Exception as workflow_error:
-                                    # If workflow also fails, re-raise the original streaming error
-                                    raise streaming_error
+                                    # If workflow.invoke also fails, try the completion API as last resort
+                                    workflow_error_msg = str(workflow_error)
+                                    if "missing query" in workflow_error_msg:
+                                        # Use completion API for chatflow (non-chat apps)
+                                        response = self.session.app.completion.invoke(
+                                            app_id=settings["app"]["app_id"],
+                                            query=message,
+                                            inputs={},
+                                            response_mode="blocking",
+                                        )
+
+                                        answer = response.get("answer", "")
+                                        formatted_answer = converter.convert(answer)
+
+                                        blocks = [{
+                                            "type": "section",
+                                            "text": {
+                                                "type": "mrkdwn",
+                                                "text": formatted_answer
+                                            }
+                                        }]
+
+                                        result = client.chat_postMessage(
+                                            channel=channel,
+                                            thread_ts=message_ts,
+                                            text=formatted_answer,
+                                            blocks=blocks,
+                                            mrkdwn=True
+                                        )
+                                    else:
+                                        raise streaming_error
                             else:
                                 # Re-raise if it's a different error
                                 raise
