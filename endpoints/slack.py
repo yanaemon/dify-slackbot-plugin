@@ -73,36 +73,52 @@ class SlackEndpoint(Endpoint):
                         last_update_time = time.time()
                         update_interval = 1.0  # Update every 1 second
 
-                        for chunk in response_stream:
-                            if chunk.event == "agent_message" or chunk.event == "message":
-                                if hasattr(chunk, 'answer'):
-                                    full_answer = chunk.answer
-                                elif hasattr(chunk, 'data') and isinstance(chunk.data, dict):
-                                    full_answer = chunk.data.get("answer", full_answer)
+                        try:
+                            for chunk in response_stream:
+                                # Handle different chunk structures
+                                chunk_data = None
+                                if hasattr(chunk, 'data'):
+                                    chunk_data = chunk.data
+                                elif isinstance(chunk, dict):
+                                    chunk_data = chunk
 
-                            # Update message periodically
-                            current_time = time.time()
-                            if current_time - last_update_time >= update_interval and full_answer:
-                                formatted_answer = converter.convert(full_answer)
-                                blocks = [{
-                                    "type": "section",
-                                    "text": {
-                                        "type": "mrkdwn",
-                                        "text": formatted_answer
-                                    }
-                                }]
+                                if chunk_data:
+                                    # Try to extract answer from various possible structures
+                                    if isinstance(chunk_data, dict):
+                                        if 'answer' in chunk_data:
+                                            full_answer = chunk_data['answer']
+                                        elif 'text' in chunk_data:
+                                            full_answer = chunk_data['text']
+                                    elif isinstance(chunk_data, str):
+                                        full_answer += chunk_data
 
-                                try:
-                                    client.chat_update(
-                                        channel=channel,
-                                        ts=response_ts,
-                                        text=formatted_answer,
-                                        blocks=blocks,
-                                        mrkdwn=True
-                                    )
-                                    last_update_time = current_time
-                                except SlackApiError:
-                                    pass  # Continue if update fails
+                                # Update message periodically
+                                current_time = time.time()
+                                if current_time - last_update_time >= update_interval and full_answer:
+                                    formatted_answer = converter.convert(full_answer)
+                                    blocks = [{
+                                        "type": "section",
+                                        "text": {
+                                            "type": "mrkdwn",
+                                            "text": formatted_answer
+                                        }
+                                    }]
+
+                                    try:
+                                        client.chat_update(
+                                            channel=channel,
+                                            ts=response_ts,
+                                            text=formatted_answer,
+                                            blocks=blocks,
+                                            mrkdwn=True
+                                        )
+                                        last_update_time = current_time
+                                    except SlackApiError:
+                                        pass  # Continue if update fails
+                        except Exception as stream_error:
+                            # Log streaming error but continue to show what we have
+                            print(f"Streaming error: {stream_error}")
+                            print(traceback.format_exc())
 
                         # Final update with complete answer
                         if full_answer:
@@ -123,7 +139,13 @@ class SlackEndpoint(Endpoint):
                                 mrkdwn=True
                             )
                         else:
-                            result = {"ok": True}
+                            # If no answer was collected, show error message
+                            result = client.chat_update(
+                                channel=channel,
+                                ts=response_ts,
+                                text="Sorry, I couldn't generate a response.",
+                                mrkdwn=True
+                            )
 
                         # Remove eyes emoji after successful response
                         try:
