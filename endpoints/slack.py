@@ -71,6 +71,7 @@ class SlackEndpoint(Endpoint):
                             
                             result = client.chat_postMessage(
                                 channel=channel,
+                                thread_ts=message_ts,  # Reply in thread
                                 text=formatted_answer,  # Fallback text
                                 blocks=blocks,
                                 mrkdwn=True
