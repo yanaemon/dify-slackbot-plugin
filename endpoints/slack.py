@@ -61,12 +61,14 @@ class SlackEndpoint(Endpoint):
                         response_ts = initial_msg["ts"]
 
                         # Start streaming response
+                        print(f"Starting streaming invoke for app_id: {settings['app']['app_id']}")
                         response_stream = self.session.app.chat.invoke(
                             app_id=settings["app"]["app_id"],
                             query=message,
                             inputs={},
                             response_mode="streaming",
                         )
+                        print(f"Response stream type: {type(response_stream)}")
 
                         # Accumulate streaming chunks
                         full_answer = ""
@@ -75,6 +77,7 @@ class SlackEndpoint(Endpoint):
 
                         try:
                             for chunk in response_stream:
+                                print(f"Received chunk: {chunk}")
                                 # Handle different chunk structures
                                 chunk_data = None
                                 if hasattr(chunk, 'data'):
@@ -82,15 +85,20 @@ class SlackEndpoint(Endpoint):
                                 elif isinstance(chunk, dict):
                                     chunk_data = chunk
 
+                                print(f"Chunk data: {chunk_data}")
+
                                 if chunk_data:
                                     # Try to extract answer from various possible structures
                                     if isinstance(chunk_data, dict):
                                         if 'answer' in chunk_data:
                                             full_answer = chunk_data['answer']
+                                            print(f"Updated full_answer from 'answer': {len(full_answer)} chars")
                                         elif 'text' in chunk_data:
                                             full_answer = chunk_data['text']
+                                            print(f"Updated full_answer from 'text': {len(full_answer)} chars")
                                     elif isinstance(chunk_data, str):
                                         full_answer += chunk_data
+                                        print(f"Appended to full_answer: {len(full_answer)} chars total")
 
                                 # Update message periodically
                                 current_time = time.time()
