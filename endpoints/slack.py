@@ -35,8 +35,20 @@ class SlackEndpoint(Endpoint):
                 if message.startswith("<@"):
                     message = message.split("> ", 1)[1] if "> " in message else message
                     channel = event.get("channel", "")
+                    message_ts = event.get("ts", "")
                     token = settings.get("bot_token")
                     client = WebClient(token=token)
+
+                    # Add eyes emoji to indicate processing has started
+                    try:
+                        client.reactions_add(
+                            channel=channel,
+                            timestamp=message_ts,
+                            name="eyes"
+                        )
+                    except SlackApiError:
+                        pass  # Continue even if reaction fails
+
                     try: 
                         response = self.session.app.chat.invoke(
                             app_id=settings["app"]["app_id"],
@@ -63,6 +75,17 @@ class SlackEndpoint(Endpoint):
                                 blocks=blocks,
                                 mrkdwn=True
                             )
+
+                            # Remove eyes emoji after successful response
+                            try:
+                                client.reactions_remove(
+                                    channel=channel,
+                                    timestamp=message_ts,
+                                    name="eyes"
+                                )
+                            except SlackApiError:
+                                pass  # Continue even if reaction removal fails
+
                             return Response(
                                 status=200,
                                 response=json.dumps(result),
@@ -72,6 +95,26 @@ class SlackEndpoint(Endpoint):
                             raise e
                     except Exception as e:
                         err = traceback.format_exc()
+
+                        # Remove eyes emoji and add x emoji to indicate error
+                        try:
+                            client.reactions_remove(
+                                channel=channel,
+                                timestamp=message_ts,
+                                name="eyes"
+                            )
+                        except SlackApiError:
+                            pass
+
+                        try:
+                            client.reactions_add(
+                                channel=channel,
+                                timestamp=message_ts,
+                                name="x"
+                            )
+                        except SlackApiError:
+                            pass
+
                         return Response(
                             status=200,
                             response="Sorry, I'm having trouble processing your request. Please try again later." + str(err),
