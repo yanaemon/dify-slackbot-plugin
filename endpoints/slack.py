@@ -12,6 +12,65 @@ converter = SlackMarkdownConverter()
 
 
 class SlackEndpoint(Endpoint):
+    def _get_thread_context(self, client, channel, thread_ts, current_message_ts, bot_user_id):
+        """
+        Get conversation context from the thread, including all messages from the last bot post.
+
+        Returns: Formatted context string with conversation history
+        """
+        try:
+            # Get thread replies
+            result = client.conversations_replies(
+                channel=channel,
+                ts=thread_ts,
+                inclusive=True
+            )
+
+            messages = result.get("messages", [])
+            if not messages:
+                return ""
+
+            # Find the last bot message before the current mention
+            last_bot_index = -1
+            for i in range(len(messages) - 1, -1, -1):
+                msg = messages[i]
+                # Skip the current message
+                if msg.get("ts") == current_message_ts:
+                    continue
+                # Check if this is a bot message
+                if msg.get("bot_id") or msg.get("user") == bot_user_id:
+                    last_bot_index = i
+                    break
+
+            # If no bot message found, start from the beginning
+            # Start from the message after the last bot post to exclude bot's own response
+            start_index = last_bot_index + 1 if last_bot_index >= 0 else 0
+
+            # Build context from messages after last bot post up to (not including) current message
+            context_parts = []
+            for msg in messages[start_index:]:
+                # Skip the current message (it will be added separately)
+                if msg.get("ts") == current_message_ts:
+                    continue
+
+                text = msg.get("text", "")
+                user = msg.get("user", "unknown")
+
+                # Remove bot mentions from text
+                if text.startswith("<@"):
+                    text = text.split("> ", 1)[1] if "> " in text else text
+
+                context_parts.append(f"[{user}]: {text}")
+
+            if context_parts:
+                return "\n".join(context_parts) + "\n\n"
+            return ""
+
+        except Exception as e:
+            print(f"Error getting thread context: {e}")
+            print(traceback.format_exc())
+            return ""
+
     def _invoke(self, r: Request, values: Mapping, settings: Mapping) -> Response:
         """
         Invokes the endpoint with the given request.
@@ -41,6 +100,18 @@ class SlackEndpoint(Endpoint):
                         thread_ts = event.get("thread_ts", message_ts)  # Use thread_ts if in thread, otherwise use message_ts
                         token = settings.get("bot_token")
                         client = WebClient(token=token)
+
+                        # Get bot user ID for context retrieval
+                        auth_response = client.auth_test()
+                        bot_user_id = auth_response.get("user_id", "")
+
+                        # Get thread context (messages from last bot post to current)
+                        thread_context = self._get_thread_context(
+                            client, channel, thread_ts, message_ts, bot_user_id
+                        )
+
+                        # Combine context with current message
+                        full_query = thread_context + f"[Current message]: {message}"
 
                         # Get or create conversation ID for this thread
                         storage_key = f"slack_thread_{thread_ts}"
@@ -77,7 +148,7 @@ class SlackEndpoint(Endpoint):
                             # Start streaming response
                             response_stream = self.session.app.chat.invoke(
                                 app_id=settings["app"]["app_id"],
-                                query=message,
+                                query=full_query,
                                 inputs={},
                                 response_mode="streaming",
                                 conversation_id=conversation_id,
@@ -175,7 +246,7 @@ class SlackEndpoint(Endpoint):
                                 # Use completion API for Chatflow apps
                                 response = self.session.app.completion.invoke(
                                     app_id=settings["app"]["app_id"],
-                                    query=message,
+                                    query=full_query,
                                     inputs={},
                                     response_mode="blocking",
                                     conversation_id=conversation_id,
