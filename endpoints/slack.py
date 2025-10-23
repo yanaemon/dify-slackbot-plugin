@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import traceback
 from typing import Mapping
@@ -92,45 +93,39 @@ class SlackEndpoint(Endpoint):
             event = data.get("event")
             if (event.get("type") == "app_mention"):
                 message = event.get("text", "")
-                if message.startswith("<@"):
+                try:
+                    channel = event.get("channel", "")
+                    message_ts = event.get("ts", "")
+                    thread_ts = event.get("thread_ts", message_ts)  # Use thread_ts if in thread, otherwise use message_ts
+                    token = settings.get("bot_token")
+                    client = WebClient(token=token)
+
+                    # Get bot user ID for context retrieval
+                    auth_response = client.auth_test()
+                    bot_user_id = auth_response.get("user_id", "")
+
+                    # Remove bot mentions from message (anywhere in the text)
+                    # Only remove mentions of this bot, not other users
+                    # Pattern: <@BOT_USER_ID> or <@BOT_USER_ID|botname>
+                    message = re.sub(rf'<@{bot_user_id}(?:\|[^>]+)?>\s*', '', message).strip()
+
+                    # Get thread context (messages from last bot post to current)
+                    thread_context = self._get_thread_context(
+                        client, channel, thread_ts, message_ts, bot_user_id
+                    )
+
+                    # Combine context with current message
+                    full_query = thread_context + f"[Current message]: {message}"
+
+                    # Get or create conversation ID for this thread
+                    storage_key = f"slack_thread_{thread_ts}"
                     try:
-                        message = message.split("> ", 1)[1] if "> " in message else message
-                        channel = event.get("channel", "")
-                        message_ts = event.get("ts", "")
-                        thread_ts = event.get("thread_ts", message_ts)  # Use thread_ts if in thread, otherwise use message_ts
-                        token = settings.get("bot_token")
-                        client = WebClient(token=token)
-
-                        # Get bot user ID for context retrieval
-                        auth_response = client.auth_test()
-                        bot_user_id = auth_response.get("user_id", "")
-
-                        # Get thread context (messages from last bot post to current)
-                        thread_context = self._get_thread_context(
-                            client, channel, thread_ts, message_ts, bot_user_id
-                        )
-
-                        # Combine context with current message
-                        full_query = thread_context + f"[Current message]: {message}"
-
-                        # Get or create conversation ID for this thread
-                        storage_key = f"slack_thread_{thread_ts}"
-                        try:
-                            stored_value = self.session.storage.get(storage_key)
-                            conversation_id = stored_value.decode('utf-8') if stored_value else ""
-                        except Exception as storage_error:
-                            # If storage fails, continue without conversation persistence
-                            conversation_id = ""
-                            print(f"Storage get failed: {storage_error}")
-
-                    except Exception as init_error:
-                        print(f"Initialization error: {init_error}")
-                        print(traceback.format_exc())
-                        return Response(
-                            status=500,
-                            response=f"Initialization error: {str(init_error)}",
-                            content_type="text/plain",
-                        )
+                        stored_value = self.session.storage.get(storage_key)
+                        conversation_id = stored_value.decode('utf-8') if stored_value else ""
+                    except Exception as storage_error:
+                        # If storage fails, continue without conversation persistence
+                        conversation_id = ""
+                        print(f"Storage get failed: {storage_error}")
 
                     try:
                         # Try streaming mode first (for Agent/Chat apps)
@@ -308,8 +303,14 @@ class SlackEndpoint(Endpoint):
                             response=json.dumps({"ok": False, "error": str(e)}),
                             content_type="application/json",
                         )
-                else:
-                    return Response(status=200, response="ok")
+                except Exception as init_error:
+                    print(f"Initialization error: {init_error}")
+                    print(traceback.format_exc())
+                    return Response(
+                        status=500,
+                        response=f"Initialization error: {str(init_error)}",
+                        content_type="text/plain",
+                    )
             else:
                 return Response(status=200, response="ok")
         else:
