@@ -37,8 +37,13 @@ class SlackEndpoint(Endpoint):
                     message = message.split("> ", 1)[1] if "> " in message else message
                     channel = event.get("channel", "")
                     message_ts = event.get("ts", "")
+                    thread_ts = event.get("thread_ts", message_ts)  # Use thread_ts if in thread, otherwise use message_ts
                     token = settings.get("bot_token")
                     client = WebClient(token=token)
+
+                    # Get or create conversation ID for this thread
+                    storage_key = f"slack_thread_{thread_ts}"
+                    conversation_id = self.session.storage.get(storage_key) or ""
 
                     try:
                         # Try streaming mode first (for Agent/Chat apps)
@@ -59,10 +64,12 @@ class SlackEndpoint(Endpoint):
                                 query=message,
                                 inputs={},
                                 response_mode="streaming",
+                                conversation_id=conversation_id,
                             )
 
                             # Accumulate streaming chunks
                             full_answer = ""
+                            response_conversation_id = ""
                             last_update_time = time.time()
                             update_interval = 1.0  # Update every 1 second
 
@@ -75,8 +82,12 @@ class SlackEndpoint(Endpoint):
                                     chunk_data = chunk
 
                                 if chunk_data:
-                                    # Accumulate answer chunks (append, don't replace)
+                                    # Capture conversation_id from response
                                     if isinstance(chunk_data, dict):
+                                        if 'conversation_id' in chunk_data and chunk_data['conversation_id']:
+                                            response_conversation_id = chunk_data['conversation_id']
+
+                                        # Accumulate answer chunks (append, don't replace)
                                         if 'answer' in chunk_data and chunk_data['answer']:
                                             full_answer += chunk_data['answer']
                                         elif 'text' in chunk_data and chunk_data['text']:
@@ -126,6 +137,10 @@ class SlackEndpoint(Endpoint):
                                     blocks=blocks,
                                     mrkdwn=True
                                 )
+
+                                # Store conversation_id for this thread
+                                if response_conversation_id:
+                                    self.session.storage.set(storage_key, response_conversation_id)
                             else:
                                 # If no answer was collected, show error message
                                 result = client.chat_update(
@@ -144,6 +159,7 @@ class SlackEndpoint(Endpoint):
                                     query=message,
                                     inputs={},
                                     response_mode="blocking",
+                                    conversation_id=conversation_id,
                                 )
 
                                 answer = response.get("answer", "")
@@ -164,6 +180,11 @@ class SlackEndpoint(Endpoint):
                                     blocks=blocks,
                                     mrkdwn=True
                                 )
+
+                                # Store conversation_id for this thread
+                                response_conversation_id = response.get("conversation_id", "")
+                                if response_conversation_id:
+                                    self.session.storage.set(storage_key, response_conversation_id)
                             except Exception as completion_error:
                                 # If completion also fails, re-raise original streaming error
                                 raise streaming_error
