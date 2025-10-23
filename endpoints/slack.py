@@ -45,7 +45,8 @@ class SlackEndpoint(Endpoint):
                         # Get or create conversation ID for this thread
                         storage_key = f"slack_thread_{thread_ts}"
                         try:
-                            conversation_id = self.session.storage.get(storage_key) or ""
+                            stored_value = self.session.storage.get(storage_key)
+                            conversation_id = stored_value.decode('utf-8') if stored_value else ""
                         except Exception as storage_error:
                             # If storage fails, continue without conversation persistence
                             conversation_id = ""
@@ -156,7 +157,7 @@ class SlackEndpoint(Endpoint):
                                 # Store conversation_id for this thread
                                 if response_conversation_id:
                                     try:
-                                        self.session.storage.set(storage_key, response_conversation_id)
+                                        self.session.storage.set(storage_key, response_conversation_id.encode('utf-8'))
                                     except Exception as storage_error:
                                         print(f"Storage set failed: {storage_error}")
                             else:
@@ -203,7 +204,7 @@ class SlackEndpoint(Endpoint):
                                 response_conversation_id = response.get("conversation_id", "")
                                 if response_conversation_id:
                                     try:
-                                        self.session.storage.set(storage_key, response_conversation_id)
+                                        self.session.storage.set(storage_key, response_conversation_id.encode('utf-8'))
                                     except Exception as storage_error:
                                         print(f"Storage set failed: {storage_error}")
                             except Exception as completion_error:
@@ -212,7 +213,7 @@ class SlackEndpoint(Endpoint):
 
                         return Response(
                             status=200,
-                            response=json.dumps(result),
+                            response=json.dumps({"ok": True}),
                             content_type="application/json"
                         )
                     except Exception as e:
