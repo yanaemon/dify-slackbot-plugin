@@ -1,12 +1,12 @@
 version: 0.0.4
 type: plugin
-author: langgenius
+author: yanaemon
 name: slack-bot
 label:
-  en_US: Slack Bot
-  ja_JP: Slack Bot
-  zh_Hans: Slack Bot
-  pt_BR: Slack Bot
+  en_US: Slack Bot Test
+  ja_JP: Slack Bot Test
+  zh_Hans: Slack Bot Test
+  pt_BR: Slack Bot Test
 description:
   en_US: This Slack Bot supports receiving messages from Slack as input to Chatflow/Chatbot/Agent in Dify, and sending messages back to Slack.
   ja_JP: この Slack Bot は、Slack からのメッセージを Dify の Chatflow/Chatbot/Agent への入力として受け取り、Slack にメッセージを送信することをサポートします。
