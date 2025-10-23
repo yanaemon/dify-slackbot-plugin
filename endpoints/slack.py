@@ -34,16 +34,31 @@ class SlackEndpoint(Endpoint):
             if (event.get("type") == "app_mention"):
                 message = event.get("text", "")
                 if message.startswith("<@"):
-                    message = message.split("> ", 1)[1] if "> " in message else message
-                    channel = event.get("channel", "")
-                    message_ts = event.get("ts", "")
-                    thread_ts = event.get("thread_ts", message_ts)  # Use thread_ts if in thread, otherwise use message_ts
-                    token = settings.get("bot_token")
-                    client = WebClient(token=token)
+                    try:
+                        message = message.split("> ", 1)[1] if "> " in message else message
+                        channel = event.get("channel", "")
+                        message_ts = event.get("ts", "")
+                        thread_ts = event.get("thread_ts", message_ts)  # Use thread_ts if in thread, otherwise use message_ts
+                        token = settings.get("bot_token")
+                        client = WebClient(token=token)
 
-                    # Get or create conversation ID for this thread
-                    storage_key = f"slack_thread_{thread_ts}"
-                    conversation_id = self.session.storage.get(storage_key) or ""
+                        # Get or create conversation ID for this thread
+                        storage_key = f"slack_thread_{thread_ts}"
+                        try:
+                            conversation_id = self.session.storage.get(storage_key) or ""
+                        except Exception as storage_error:
+                            # If storage fails, continue without conversation persistence
+                            conversation_id = ""
+                            print(f"Storage get failed: {storage_error}")
+
+                    except Exception as init_error:
+                        print(f"Initialization error: {init_error}")
+                        print(traceback.format_exc())
+                        return Response(
+                            status=500,
+                            response=f"Initialization error: {str(init_error)}",
+                            content_type="text/plain",
+                        )
 
                     try:
                         # Try streaming mode first (for Agent/Chat apps)
@@ -140,7 +155,10 @@ class SlackEndpoint(Endpoint):
 
                                 # Store conversation_id for this thread
                                 if response_conversation_id:
-                                    self.session.storage.set(storage_key, response_conversation_id)
+                                    try:
+                                        self.session.storage.set(storage_key, response_conversation_id)
+                                    except Exception as storage_error:
+                                        print(f"Storage set failed: {storage_error}")
                             else:
                                 # If no answer was collected, show error message
                                 result = client.chat_update(
@@ -184,7 +202,10 @@ class SlackEndpoint(Endpoint):
                                 # Store conversation_id for this thread
                                 response_conversation_id = response.get("conversation_id", "")
                                 if response_conversation_id:
-                                    self.session.storage.set(storage_key, response_conversation_id)
+                                    try:
+                                        self.session.storage.set(storage_key, response_conversation_id)
+                                    except Exception as storage_error:
+                                        print(f"Storage set failed: {storage_error}")
                             except Exception as completion_error:
                                 # If completion also fails, re-raise original streaming error
                                 raise streaming_error
@@ -196,11 +217,24 @@ class SlackEndpoint(Endpoint):
                         )
                     except Exception as e:
                         err = traceback.format_exc()
+                        print(f"Main error handler: {e}")
+                        print(err)
+
+                        # Try to post error message to Slack
+                        try:
+                            client.chat_postMessage(
+                                channel=channel,
+                                thread_ts=message_ts,
+                                text=f"Sorry, I'm having trouble processing your request. Error: {str(e)}",
+                                mrkdwn=False
+                            )
+                        except Exception:
+                            pass
 
                         return Response(
                             status=200,
-                            response="Sorry, I'm having trouble processing your request. Please try again later." + str(err),
-                            content_type="text/plain",
+                            response=json.dumps({"ok": False, "error": str(e)}),
+                            content_type="application/json",
                         )
                 else:
                     return Response(status=200, response="ok")
